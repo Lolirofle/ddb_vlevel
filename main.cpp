@@ -120,7 +120,8 @@ void vlevel_close(ddb_dsp_context_t *ctx){
 
 void vlevel_reset(ddb_dsp_context_t *ctx){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
-	data->buffer.del();
+	//data->buffer.del();
+	data->vl->Flush();
 }
 
 //TODO: There is a delay due to the buffer length. The duration indicator after seeking becomes incorrect. Songs also stop early (last part of buffer gets deleted before it has ended). Is there a way to fix this?
