@@ -7,120 +7,46 @@
 enum{
 	VLEVEL_PARAM_STRENGTH,
 	VLEVEL_PARAM_MAX_MULTIPLIER,
-	VLEVEL_PARAM_MAX_BUFFER_LENGTH,
+	VLEVEL_PARAM_MAX_BUFFER_DURATION,
 	VLEVEL_PARAM_COUNT
 };
 
 DB_functions_t *deadbeef;
 DB_dsp_t plugin;
 
-// Only used for the communication between Exchange in volumeleveler.h and samples in vlevel_process.
-class ddb_vlevel_buffer{
-	public:
-	value_t **buffers;
-	int count;
-	int channels;
-	int sample_rate;
-
-	ddb_vlevel_buffer(){
-		this->buffers = NULL;
-		this->count = 0;
-		this->channels = 0;
-		this->sample_rate = 0;
-	}
-
-	bool init(int count,int channels,int sample_rate){
-		if(count <= 0 || channels <= 0) goto fail;
-		if(this->buffers){
-			value_t *tmp;
-			if(
-				!(tmp = (value_t *) realloc(*this->buffers,sizeof(value_t) * count * channels))
-				|| !(this->buffers = (value_t **) realloc(this->buffers,sizeof(value_t *) * channels))
-			){
-				goto fail;
-			}
-			*this->buffers = tmp;
-		}else if(!(this->buffers = (value_t **) malloc(sizeof(value_t *) * channels)) || !(*this->buffers = (value_t *) malloc(sizeof(value_t) * count * channels))){
-			goto fail;
-		}
-
-		for(int c=1; c<channels; c+=1){
-			this->buffers[c] = this->buffers[0] + (count * c);
-		}
-		this->count = count;
-		this->channels = channels;
-		this->sample_rate = sample_rate;
-		return true;
-
-		fail:
-		this->del();
-		return false;
-	}
-
-	void del(){
-		if(this->buffers){
-			if(this->buffers[0]) free((void*)this->buffers[0]);
-			free((void*)this->buffers);
-			this->buffers = NULL;
-		}
-		this->count = 0;
-		this->channels = 0;
-		this->sample_rate = 0;
-	}
-
-	void from_interleaved_channels(const value_t *data){
-		for(size_t s=0; s<(size_t)this->count; s+=1){
-			for(size_t c=0; c<(size_t)this->channels; c+=1) {
-				this->buffers[c][s] = data[s * this->channels + c];
-			}
-		}
-	}
-
-	void to_interleaved_channels(value_t *data,size_t offset){
-		for(size_t s=offset; s<(size_t)this->count; s+=1){
-		    for(size_t c=0; c<(size_t)this->channels; c+=1){
-		        data[(s - offset) * this->channels + c] = this->buffers[c][s];
-		    }
-		}
-	}
-};
-
 struct ddb_vlevel_t{
 	ddb_dsp_context_t ctx;
 	VolumeLeveler *vl;
-	ddb_vlevel_buffer buffer;
+	double buffer_duration; //Seconds. Range: Positive.
+	int prev_sample_rate;
 
-	//Settings.
-	value_t strength;       //Range: 0.0 to 1.0.
-	value_t max_multiplier; //Range: Positive.
-	double buffer_length;   //Range: Positive.
+	size_t buffer_length(int sample_rate){
+		return (size_t)(buffer_duration * sample_rate + 0.5);
+	}
 };
+
 
 ddb_dsp_context_t *vlevel_open(void){
 	ddb_vlevel_t *data = (ddb_vlevel_t *) malloc(sizeof(ddb_vlevel_t));
 	DDB_INIT_DSP_CONTEXT(data,ddb_vlevel_t,&plugin);
 
 	//Initialise.
-	data->strength = 0.8;
-	data->max_multiplier = 25;
-	data->buffer_length = 2.0;
-	data->buffer = ddb_vlevel_buffer();
+	data->buffer_duration = 2.0;
+	data->prev_sample_rate = 44100;
 	data->vl = new VolumeLeveler();
-	data->vl->SetStrength(data->strength);
-	data->vl->SetMaxMultiplier(data->max_multiplier);
+	data->vl->SetStrength(0.8);
+	data->vl->SetMaxMultiplier(25);
 
 	return(ddb_dsp_context_t *)data;
 }
 
 void vlevel_close(ddb_dsp_context_t *ctx){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
-	data->buffer.del();
 	free(data);
 }
 
 void vlevel_reset(ddb_dsp_context_t *ctx){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
-	//data->buffer.del();
 	data->vl->Flush();
 }
 
@@ -128,26 +54,19 @@ void vlevel_reset(ddb_dsp_context_t *ctx){
 int vlevel_process(ddb_dsp_context_t *ctx, float *samples, int nframes, int maxframes, ddb_waveformat_t *fmt, float *r){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
 
-	if(!data->buffer.buffers || data->buffer.count != nframes || data->buffer.channels != fmt->channels || data->buffer.sample_rate != fmt->samplerate){
-		if(data->buffer.init(nframes,fmt->channels,fmt->samplerate)){
-			data->vl->SetSamplesAndChannels((size_t)(data->buffer_length * data->buffer.sample_rate + 0.5),data->buffer.channels);
-		}else{
-			return 0;
-		}
+	if(data->prev_sample_rate != fmt->samplerate || (int)data->vl->GetChannels() != fmt->channels){
+		data->prev_sample_rate = fmt->samplerate;
+		data->vl->SetSamplesAndChannels(data->buffer_length(fmt->samplerate),data->vl->GetChannels());
 	}
 
-	data->buffer.from_interleaved_channels(samples);
-	size_t nsilent = data->vl->Exchange<value_t **,bufferExchangePtrPtrIndex>(data->buffer.buffers,data->buffer.buffers,data->buffer.count);
-	data->buffer.to_interleaved_channels(samples,nsilent);
-
-	return nframes - nsilent;
+	return nframes - data->vl->Exchange<value_t *,bufferExchangeInterleavedIndex>(samples,samples,(size_t)nframes);
 }
 
 const char *vlevel_get_param_name(int p){
 	switch(p){
-	case VLEVEL_PARAM_STRENGTH         : return "Strength";
-	case VLEVEL_PARAM_MAX_MULTIPLIER   : return "Max multiplier";
-	case VLEVEL_PARAM_MAX_BUFFER_LENGTH: return "Buffer length";
+	case VLEVEL_PARAM_STRENGTH           : return "Strength";
+	case VLEVEL_PARAM_MAX_MULTIPLIER     : return "Max multiplier";
+	case VLEVEL_PARAM_MAX_BUFFER_DURATION: return "Buffer duration";
 	default: fprintf(stderr, "vlevel_param_name: invalid param index (%d)\n", p);
 	}
 	return NULL;
@@ -161,16 +80,14 @@ void vlevel_set_param(ddb_dsp_context_t *ctx, int p, const char *val){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
 	switch(p){
 	case VLEVEL_PARAM_STRENGTH:
-		data->strength = atof(val);
-		data->vl->SetStrength(data->strength);
+		data->vl->SetStrength(atof(val));
 		break;
 	case VLEVEL_PARAM_MAX_MULTIPLIER:
-		data->max_multiplier = atof(val);
-		data->vl->SetMaxMultiplier(data->max_multiplier);
+		data->vl->SetMaxMultiplier(atof(val));
 		break;
-	case VLEVEL_PARAM_MAX_BUFFER_LENGTH:
-		data->buffer_length = atof(val);
-		data->vl->SetSamplesAndChannels((size_t)(data->buffer_length * data->buffer.sample_rate + 0.5),data->buffer.channels);
+	case VLEVEL_PARAM_MAX_BUFFER_DURATION:
+		data->buffer_duration = atof(val);
+		data->vl->SetSamplesAndChannels(data->buffer_length(data->prev_sample_rate),data->vl->GetChannels());
 		break;
 	default:
 		fprintf(stderr, "vlevel_param: invalid param index (%d)\n", p);
@@ -180,9 +97,9 @@ void vlevel_set_param(ddb_dsp_context_t *ctx, int p, const char *val){
 void vlevel_get_param(ddb_dsp_context_t *ctx, int p, char *val, int sz){
 	ddb_vlevel_t *data = (ddb_vlevel_t *)ctx;
 	switch(p){
-	case VLEVEL_PARAM_STRENGTH         : snprintf(val, sz, "%f", data->strength);       break;
-	case VLEVEL_PARAM_MAX_MULTIPLIER   : snprintf(val, sz, "%f", data->max_multiplier); break;
-	case VLEVEL_PARAM_MAX_BUFFER_LENGTH: snprintf(val, sz, "%f", data->buffer_length);  break;
+	case VLEVEL_PARAM_STRENGTH           : snprintf(val, sz, "%f", data->vl->GetStrength());      break;
+	case VLEVEL_PARAM_MAX_MULTIPLIER     : snprintf(val, sz, "%f", data->vl->GetMaxMultiplier()); break;
+	case VLEVEL_PARAM_MAX_BUFFER_DURATION: snprintf(val, sz, "%f", data->buffer_duration);        break;
 	default:
 		fprintf(stderr, "vlevel_get_param: invalid param index (%d)\n", p);
 	}
@@ -191,7 +108,7 @@ void vlevel_get_param(ddb_dsp_context_t *ctx, int p, char *val, int sz){
 const char settings_dlg[] =
 	"property \"Strength\" spinbtn[0.00,1.00,0.01] 0 0.8;\n"
 	"property \"Max multiplier (20*log10(m) dB)\" spinbtn[1,100,1] 1 25;\n"
-	"property \"Buffer length (seconds)\" spinbtn[0.1,5.0,0.1] 2 2.0;\n"
+	"property \"Buffer duration (seconds)\" spinbtn[0.1,5.0,0.1] 2 2.0;\n"
 ;
 
 extern "C" DB_plugin_t * ddb_vlevel_load(DB_functions_t *ddb){
