@@ -137,7 +137,7 @@ int vlevel_process(ddb_dsp_context_t *ctx, float *samples, int nframes, int maxf
 	}
 
 	data->buffer.from_interleaved_channels(samples);
-	size_t nsilent = data->vl->Exchange(data->buffer.buffers,data->buffer.buffers,data->buffer.count);
+	size_t nsilent = data->vl->Exchange<value_t **,bufferExchangePtrPtrIndex>(data->buffer.buffers,data->buffer.buffers,data->buffer.count);
 	data->buffer.to_interleaved_channels(samples,nsilent);
 
 	return nframes - nsilent;

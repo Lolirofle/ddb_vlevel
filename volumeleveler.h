@@ -65,12 +65,14 @@ public:
 
 	// replaces raw with processed, returns how many samples are
 	// residual silence from when the buffers were empty.
-	size_t Exchange(value_t **in_buf, value_t **out_buf, size_t in_samples);
+	template <typename BUF , value_t&(*index)(BUF bufs,size_t ch,size_t max_ch,size_t pos)>
+	size_t Exchange(BUF in_buf, BUF out_buf, size_t in_samples);
 
 private:
 	//void Exchange_1(value_t **in_buf, value_t **out_buf, size_t in_samples);
 	//void Exchange_2(value_t **in_buf, value_t **out_buf, size_t in_samples);
-	void Exchange_n(value_t **in_buf, value_t **out_buf, size_t in_samples);
+	template <typename BUF , value_t&(*index)(BUF bufs,size_t ch,size_t max_ch,size_t pos)>
+	void Exchange_n(BUF in_buf, BUF out_buf, size_t in_samples);
 
 	// the buffer
 	value_t **bufs;
@@ -105,5 +107,8 @@ private:
 	// the value at the maximum slope
 	value_t max_slope_val;
 };
+
+value_t& bufferExchangePtrPtrIndex(value_t **bufs,size_t ch,size_t max_ch,size_t pos);
+value_t& bufferExchangeInterleavedIndex(value_t *buf,size_t ch,size_t max_ch,size_t pos);
 
 #endif // ndef VOLUMELEVELER_H

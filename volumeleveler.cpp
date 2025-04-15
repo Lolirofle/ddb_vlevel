@@ -96,9 +96,10 @@ value_t VolumeLeveler::GetMultiplier()
 	return multiplier;
 }
 
-size_t VolumeLeveler::Exchange(value_t **in_bufs, value_t **out_bufs, size_t in_samples)
+template <typename BUF , value_t&(*index)(BUF bufs,size_t ch,size_t max_ch,size_t pos)>
+size_t VolumeLeveler::Exchange(BUF in_bufs, BUF out_bufs, size_t in_samples)
 {
-	Exchange_n(in_bufs, out_bufs, in_samples);
+	Exchange_n<BUF,index>(in_bufs, out_bufs, in_samples);
 
 	if(silence >= in_samples) {
 		silence -= in_samples;
@@ -110,7 +111,8 @@ size_t VolumeLeveler::Exchange(value_t **in_bufs, value_t **out_bufs, size_t in_
 	}
 }
 
-void VolumeLeveler::Exchange_n(value_t **in_bufs, value_t **out_bufs, size_t in_samples)
+template <typename BUF , value_t&(*index)(BUF bufs,size_t ch,size_t max_ch,size_t pos)>
+void VolumeLeveler::Exchange_n(BUF in_bufs, BUF out_bufs, size_t in_samples)
 {
 	// for each user_pos in user_buf
 	for (size_t user_pos = 0; user_pos < in_samples; ++user_pos) {
@@ -139,8 +141,8 @@ void VolumeLeveler::Exchange_n(value_t **in_bufs, value_t **out_bufs, size_t in_
 		// multiplier and finding max of the new sample
 		value_t new_val = 0;
 		for(size_t ch = 0; ch < channels; ++ch) {
-			value_t in = in_bufs[ch][user_pos];
-			out_bufs[ch][user_pos] = bufs[ch][pos] * multiplier;
+			value_t in = index(in_bufs,ch,channels,user_pos);
+			index(out_bufs,ch,channels,user_pos) = bufs[ch][pos] * multiplier;
 			bufs[ch][pos] = in;
 			if(VLEVEL_ABS(in) > new_val) new_val = VLEVEL_ABS(in);
 		}
@@ -184,3 +186,11 @@ void VolumeLeveler::Exchange_n(value_t **in_bufs, value_t **out_bufs, size_t in_
 		}
 	}
 }
+
+value_t& bufferExchangePtrPtrIndex(value_t **bufs,size_t ch,size_t max_ch,size_t pos){return bufs[ch][pos];}
+template size_t VolumeLeveler::Exchange<value_t **,bufferExchangePtrPtrIndex>(value_t **in_bufs, value_t **out_bufs, size_t in_samples);
+template void VolumeLeveler::Exchange_n<value_t **,bufferExchangePtrPtrIndex>(value_t **in_bufs, value_t **out_bufs, size_t in_samples);
+
+value_t& bufferExchangeInterleavedIndex(value_t *buf,size_t ch,size_t max_ch,size_t pos){return buf[pos * max_ch + ch];}
+template size_t VolumeLeveler::Exchange<value_t *,bufferExchangeInterleavedIndex>(value_t *in_bufs, value_t *out_bufs, size_t in_samples);
+template void VolumeLeveler::Exchange_n<value_t *,bufferExchangeInterleavedIndex>(value_t *in_bufs, value_t *out_bufs, size_t in_samples);
