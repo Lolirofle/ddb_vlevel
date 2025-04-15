@@ -1,0 +1,4 @@
+https://vlevel.sourceforge.net
+https://github.com/radiocicletta/vlevel
+
+volumeleveler.cpp and volumeleveler.h have been modified to work directly with deadbeef's interleaved sample format while also keeping the original format intact.

@@ -25,7 +25,6 @@ struct ddb_vlevel_t{
 	}
 };
 
-
 ddb_dsp_context_t *vlevel_open(void){
 	ddb_vlevel_t *data = (ddb_vlevel_t *) malloc(sizeof(ddb_vlevel_t));
 	DDB_INIT_DSP_CONTEXT(data,ddb_vlevel_t,&plugin);
